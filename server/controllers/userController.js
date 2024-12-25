@@ -1,45 +1,76 @@
-const User = require('../models/User');
-const { verifyTelegramInitData } = require('../utils/telegramAuth');
+const { 
+  verifyTelegramInitData, 
+  isAuthDateValid, 
+  extractUserData 
+} = require('../utils/telegramAuth');
 
 exports.authUser = async (req, res) => {
   try {
-    const { initData } = req.body; // или req.query, смторя как данные отправим
-    if (!initData) {
-      return res.status(400).json({ message: 'No initData provided' });
-    }
-
-    // Проверяем корректность initData
-    const data = verifyTelegramInitData(initData);
-    if (!data) {
-      return res.status(401).json({ message: 'Invalid initData signature' });
-    }
-
-    // Если всё ок, достаём telegram_user_id, username, first_name и т.д.
-    const telegramId = data.user?.id || data.telegram_user_id; 
-    const username = data.user?.username || data.username;
-    const firstName = data.user?.first_name || data.first_name;
-    const lastName = data.user?.last_name || data.last_name;
-
-    // Пытаемся найти пользователя в БД
-    let user = await User.findOne({ telegramId });
-
-    // Если нету - создаём
-    if (!user) {
-      user = await User.create({
-        telegramId,
-        username,
-        first_name: firstName,
-        last_name: lastName,
+    const { initData } = req.body;
+    
+    // Проверяем данные
+    const verifiedData = verifyTelegramInitData(initData);
+    if (!verifiedData) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Invalid authentication data' 
       });
     }
 
-    // Возвращаем данные
+    // Проверяем актуальность auth_date
+    if (!isAuthDateValid(verifiedData.auth_date)) {
+      return res.status(401).json({ 
+        success: false, 
+        message: 'Authentication data expired' 
+      });
+    }
+
+    // Извлекаем данные пользователя
+    const userData = extractUserData(verifiedData);
+
+    // Ищем или создаем пользователя
+    let user = await User.findOne({ telegramId: userData.telegramId });
+    
+    if (!user) {
+      user = await User.create(userData);
+    } else {
+      // Обновляем существующего пользователя
+      Object.assign(user, userData);
+      await user.save();
+    }
+
+    // Генерируем токен
+    const token = jwt.sign(
+      { telegramId: user.telegramId },
+      JWT_SECRET,
+      { expiresIn: '1h' }
+    );
+
+    // Сохраняем токен
+    user.tokens = user.tokens || [];
+    user.tokens.push({ token });
+    await user.save();
+
     res.status(200).json({
-      message: 'User authenticated',
-      user,
+      success: true,
+      message: 'Authentication successful',
+      user: {
+        id: user._id,
+        telegramId: user.telegramId,
+        username: user.username,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        photoUrl: user.photoUrl
+      },
+      token
     });
+
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('Auth error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error',
+      error: error.message 
+    });
   }
 };

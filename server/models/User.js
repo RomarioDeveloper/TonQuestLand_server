@@ -28,17 +28,23 @@ const userSchema = new mongoose.Schema(
       default: [],
     },
     nftWalletAddress: {
-      type: String, // почекаю еще web3auth. кошелек будем получать при регистрации
-      required: false,
+      type: String,
+      required: false, 
     },
-    createdAt: {
-      type: Date,
-      default: Date.now,
-    },
-    updatedAt: {
-      type: Date,
-      default: Date.now,
-    },
+    // Добавляем массив токенов с TTL (1 час)
+    tokens: [
+      {
+        token: {
+          type: String,
+          required: true,
+        },
+        createdAt: {
+          type: Date,
+          default: Date.now,
+          expires: '1h', // токен истекает через час
+        },
+      },
+    ],
   },
   {
     timestamps: true,
